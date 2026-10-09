@@ -145,6 +145,7 @@ textarea.code{min-height:110px;font-family:var(--mono);font-size:12px;resize:ver
       <div class="sub" id="status"></div>
     </div>
     <div class="row">
+      <button class="btn" id="syncBtn">Versions</button>
       <button class="btn" id="importBtn">Import</button>
       <button class="btn" id="exportBtn">Back up</button>
       <button class="btn primary" id="addBtn">+ Add trade</button>
@@ -256,6 +257,29 @@ textarea.code{min-height:110px;font-family:var(--mono);font-size:12px;resize:ver
   </div>
 </div>
 
+<div class="overlay" id="syncModal" hidden>
+  <div class="modal">
+    <h3>GitHub data store</h3>
+    <div id="ghOff">
+      <div class="hint" style="margin-bottom:12px">Connect once per browser. Every change is then saved to <b>journal.json</b> in your private repo and loaded back when you open this page.</div>
+      <div class="f"><label for="ghRepo">Private data repo (owner/name)</label><input type="text" id="ghRepo" value="FalconcapitalMG/kuchbhi-data"></div>
+      <div class="f"><label for="ghToken">Access token</label><input type="password" id="ghToken" placeholder="github_pat_..." autocomplete="off"></div>
+      <div class="err" id="ghErr"></div>
+      <div class="acts"><span></span><div class="row"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ghConnect">Connect</button></div></div>
+    </div>
+    <div id="ghOn" hidden>
+      <div class="hint" id="ghInfo" style="margin-bottom:12px"></div>
+      <div class="fr" style="align-items:flex-end">
+        <div class="f"><label for="ghLabel">Version name</label><input type="text" id="ghLabel" placeholder="e.g. Week 41 review"></div>
+        <button class="btn primary" id="ghSave" style="margin-bottom:12px">Save version</button>
+      </div>
+      <div class="lab" style="margin-bottom:8px">Version history</div>
+      <div id="ghHist" class="hint">Loading…</div>
+      <div class="acts" style="margin-top:14px"><button class="btn ghost danger" id="ghOffBtn">Disconnect</button><button class="btn ghost" data-close>Close</button></div>
+    </div>
+  </div>
+</div>
+
 <div class="panel-scrim" id="scrim" hidden></div>
 <aside class="panel" id="panel" hidden>
   <div class="row" style="justify-content:space-between">
@@ -305,9 +329,59 @@ function load(){
   catch(e){storageOk=false;}
   if(!state.trades.length) seedSamples();
 }
-function persist(){
-  try{localStorage.setItem(KEY,JSON.stringify(state));return true;}
-  catch(e){toast(storageOk?'Storage is full. Remove some screenshots.':'This browser is not saving data. Use Back up.');return false;}
+function persist(skipSync){
+  let ok=true;
+  try{localStorage.setItem(KEY,JSON.stringify(state));}
+  catch(e){ok=false; if(!gh) toast(storageOk?'Storage is full. Remove some screenshots.':'This browser is not saving data. Use Back up.');}
+  if(!skipSync) queueSync();
+  return ok||!!gh;
+}
+
+// ---- GitHub data store: journal.json in a private repo, one commit per save
+const GKEY='trade-journal-gh', DKEY='trade-journal-dirty', FILE='journal.json';
+let gh=null, ghSha=null, rev=0, syncT=null, syncState='', chain=Promise.resolve();
+try{gh=JSON.parse(localStorage.getItem(GKEY));}catch(e){}
+const ls=(k,v)=>{try{if(v===undefined) return localStorage.getItem(k); if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,v);}catch(e){} return null;};
+const api=(path,o={})=>fetch(`https://api.github.com/repos/${gh.owner}/${gh.repo}${path?'/'+path:''}`,{method:o.method||'GET',body:o.body,cache:'no-store',headers:{Authorization:'Bearer '+gh.token,Accept:o.accept||'application/vnd.github+json'}});
+const b64=s=>{const b=new TextEncoder().encode(s);let o='';for(let i=0;i<b.length;i+=8192)o+=String.fromCharCode.apply(null,b.subarray(i,i+8192));return btoa(o);};
+const stamp=()=>new Date().toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+const ghMsg=e=>({401:'GitHub rejected the token. Reconnect with a new one.',403:'The token cannot write to that repo.',404:'Repo not found, or the token has no access to it.'}[e.message]||'Could not reach GitHub. Changes are kept in this browser and will retry.');
+function setSync(s){syncState=s;renderHead();}
+async function getSha(){const r=await api('contents/'+FILE,{accept:'application/vnd.github.object+json'}); if(r.status===404){ghSha=null;return;} if(!r.ok) throw new Error(r.status); ghSha=(await r.json()).sha;}
+async function pull(ref){const r=await api('contents/'+FILE+(ref?'?ref='+ref:''),{accept:'application/vnd.github.raw+json'}); if(r.status===404) return null; if(!r.ok) throw new Error(r.status); return JSON.parse(await r.text());}
+async function push(label){
+  setSync('saving…');
+  const n=rev+1, mk=()=>JSON.stringify({message:`v${n} · ${label||'Auto-save '+stamp()}`,content:b64(JSON.stringify({rev:n,trades:state.trades.filter(t=>!t.sample),journal:state.journal,media:state.media},null,1)),...(ghSha?{sha:ghSha}:{})});
+  let r=await api('contents/'+FILE,{method:'PUT',body:mk()});
+  if(r.status===409||r.status===422){await getSha(); r=await api('contents/'+FILE,{method:'PUT',body:mk()});}
+  if(!r.ok) throw new Error(r.status);
+  ghSha=(await r.json()).content.sha; rev=n; ls(DKEY,null); setSync(`v${n} saved ${stamp()}`);
+}
+function runPush(label){clearTimeout(syncT); chain=chain.then(()=>push(label)).catch(e=>{setSync('not saved');toast(ghMsg(e));}); return chain;}
+function queueSync(){if(!gh) return; ls(DKEY,'1'); setSync('saving…'); clearTimeout(syncT); syncT=setTimeout(()=>runPush(),2500);}
+function adopt(p){state={trades:p.trades||[],journal:p.journal||{},media:p.media||{}}; persist(true);}
+async function ghInit(){
+  if(!gh) return; setSync('loading…');
+  try{
+    await getSha(); const p=ghSha?await pull():null; if(p) rev=p.rev||0;
+    const mine=state.trades.some(t=>!t.sample);
+    if(ls(DKEY)&&mine) await runPush('Changes made offline');
+    else if(p&&Array.isArray(p.trades)){adopt(p); setSync(`v${rev} loaded`);}
+    else if(mine) await runPush('First upload');
+    else setSync('connected');
+    renderAll();
+  }catch(e){setSync('offline');toast(ghMsg(e));}
+}
+async function ghHistory(){
+  const box=$('#ghHist'); box.textContent='Loading…';
+  try{const r=await api('commits?path='+FILE+'&per_page=40'); if(!r.ok) throw new Error(r.status); const list=await r.json();
+    box.innerHTML=list.length?list.map(c=>`<div class="dt"><span><b>${esc(c.commit.message.split('\n')[0])}</b><br><span class="hint">${esc(new Date(c.commit.author.date).toLocaleString('en-GB'))}</span></span><button class="btn" data-ref="${esc(c.sha)}" data-msg="${esc(c.commit.message.split('\n')[0])}">Restore</button></div>`).join(''):'No versions yet. Add a trade or save a version.';
+  }catch(e){box.textContent=ghMsg(e);}
+}
+function showSync(){
+  $('#ghOff').hidden=!!gh; $('#ghOn').hidden=!gh; $('#ghErr').textContent='';
+  if(gh){$('#ghInfo').innerHTML=`Connected to <b>${esc(gh.owner)}/${esc(gh.repo)}</b>. Changes save automatically; name a version to mark a point you may want to return to.`; ghHistory();}
+  $('#syncModal').hidden=false;
 }
 function seedSamples(){
   let s=7; const rnd=()=>(s=(s*16807)%2147483647)/2147483647;
@@ -333,7 +407,7 @@ function renderHead(){
   const hasSample=state.trades.some(t=>t.sample);
   $('#sampleBanner').hidden=!hasSample;
   const n=state.trades.filter(t=>!t.sample).length;
-  $('#status').textContent=hasSample&&!n?'sample data shown':`${n} trade${n===1?'':'s'} logged · saved in this browser`;
+  $('#status').textContent=hasSample&&!n?'sample data shown':`${n} trade${n===1?'':'s'} logged · ${gh?'GitHub: '+syncState:'saved in this browser only'}`;
   $('#monthLabel').textContent=month.toLocaleDateString('en-US',{month:'long',year:'numeric'});
   $('#symList').innerHTML=[...new Set(state.trades.map(t=>t.symbol))].map(s=>`<option value="${esc(s)}">`).join('');
   $('#setupList').innerHTML=[...new Set(state.trades.map(t=>t.setup).filter(Boolean))].map(s=>`<option value="${esc(s)}">`).join('');
@@ -574,5 +648,21 @@ document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('.o
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('mousedown',e=>{if(e.target===o) o.hidden=true;}));
 document.addEventListener('keydown',e=>{if(e.key!=='Escape') return; const o=[...document.querySelectorAll('.overlay')].find(x=>!x.hidden); if(o) o.hidden=true; else if(selDay) closeDay();});
 
-load(); renderAll();
+$('#syncBtn').onclick=showSync;
+$('#ghConnect').onclick=async()=>{
+  const m=$('#ghRepo').value.trim().replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').split('/'), token=$('#ghToken').value.trim();
+  if(m.length<2||!m[0]||!m[1]||!token){$('#ghErr').textContent='Enter the repo as owner/name and paste the token.';return;}
+  gh={owner:m[0],repo:m[1],token}; $('#ghErr').textContent='Checking…';
+  try{const r=await api(''); if(!r.ok) throw new Error(r.status); ls(GKEY,JSON.stringify(gh)); $('#ghToken').value=''; await ghInit(); showSync(); toast('Connected to GitHub');}
+  catch(e){gh=null; $('#ghErr').textContent=ghMsg(e);}
+};
+$('#ghSave').onclick=async()=>{const l=$('#ghLabel').value.trim(); if(!l){$('#ghLabel').focus();return;} await runPush(l); $('#ghLabel').value=''; ghHistory();};
+$('#ghHist').onclick=async e=>{const b=e.target.closest('[data-ref]'); if(!b) return;
+  if(!b.dataset.armed){b.dataset.armed='1';b.textContent='Click again';return;}
+  try{const p=await pull(b.dataset.ref); if(!p) throw new Error('404'); adopt(p); await runPush('Restored: '+b.dataset.msg); renderAll(); ghHistory(); toast('Version restored');}catch(err){toast(ghMsg(err));}
+};
+$('#ghOffBtn').onclick=()=>{gh=null;ghSha=null;ls(GKEY,null);renderHead();showSync();};
+window.addEventListener('beforeunload',e=>{if(gh&&ls(DKEY)){e.preventDefault();e.returnValue='';}});
+
+load(); renderAll(); ghInit();
 </script>
