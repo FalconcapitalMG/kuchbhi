@@ -339,7 +339,7 @@ function persist(skipSync){
 
 // ---- GitHub data store: journal.json in a private repo, one commit per save
 const GKEY='trade-journal-gh', DKEY='trade-journal-dirty', FILE='journal.json';
-let gh=null, ghSha=null, rev=0, syncT=null, syncState='', chain=Promise.resolve();
+let gh=null, ghSha=null, vers=[], preview=false, syncT=null, syncState='', chain=Promise.resolve();
 try{gh=JSON.parse(localStorage.getItem(GKEY));}catch(e){}
 const ls=(k,v)=>{try{if(v===undefined) return localStorage.getItem(k); if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,v);}catch(e){} return null;};
 const api=(path,o={})=>fetch(`https://api.github.com/repos/${gh.owner}/${gh.repo}${path?'/'+path:''}`,{method:o.method||'GET',body:o.body,cache:'no-store',headers:{Authorization:'Bearer '+gh.token,Accept:o.accept||'application/vnd.github+json'}});
@@ -348,39 +348,45 @@ const stamp=()=>new Date().toLocaleString('en-GB',{day:'2-digit',month:'short',h
 const ghMsg=e=>({401:'GitHub rejected the token. Reconnect with a new one.',403:'The token cannot write to that repo.',404:'Repo not found, or the token has no access to it.'}[e.message]||'Could not reach GitHub. Changes are kept in this browser and will retry.');
 function setSync(s){syncState=s;renderHead();}
 async function getSha(){const r=await api('contents/'+FILE,{accept:'application/vnd.github.object+json'}); if(r.status===404){ghSha=null;return;} if(!r.ok) throw new Error(r.status); ghSha=(await r.json()).sha;}
-async function pull(ref){const r=await api('contents/'+FILE+(ref?'?ref='+ref:''),{accept:'application/vnd.github.raw+json'}); if(r.status===404) return null; if(!r.ok) throw new Error(r.status); return JSON.parse(await r.text());}
-async function push(label){
+async function pull(file){const r=await api('contents/'+(file||FILE),{accept:'application/vnd.github.raw+json'}); if(r.status===404) return null; if(!r.ok) throw new Error(r.status); return JSON.parse(await r.text());}
+const snap=()=>({trades:state.trades.filter(t=>!t.sample),journal:state.journal,media:state.media});
+const put=(file,obj,message,sha)=>api('contents/'+file,{method:'PUT',body:JSON.stringify({message,content:b64(JSON.stringify(obj,null,1)),...(sha?{sha}:{})})});
+async function push(){
   setSync('saving…');
-  const n=rev+1, mk=()=>JSON.stringify({message:`v${n} · ${label||'Auto-save '+stamp()}`,content:b64(JSON.stringify({rev:n,trades:state.trades.filter(t=>!t.sample),journal:state.journal,media:state.media},null,1)),...(ghSha?{sha:ghSha}:{})});
-  let r=await api('contents/'+FILE,{method:'PUT',body:mk()});
-  if(r.status===409||r.status===422){await getSha(); r=await api('contents/'+FILE,{method:'PUT',body:mk()});}
+  const go=()=>put(FILE,{versions:vers,...snap()},'autosave '+stamp(),ghSha);
+  let r=await go();
+  if(r.status===409||r.status===422){await getSha(); r=await go();}
   if(!r.ok) throw new Error(r.status);
-  ghSha=(await r.json()).content.sha; rev=n; ls(DKEY,null); setSync(`v${n} saved ${stamp()}`);
+  ghSha=(await r.json()).content.sha; ls(DKEY,null); setSync('saved '+stamp());
+}
+async function saveVersion(label){
+  const n=vers.reduce((m,v)=>Math.max(m,v.n),0)+1;
+  const r=await put(`versions/v${n}.json`,snap(),`v${n} · ${label}`);
+  if(!r.ok) throw new Error(r.status);
+  vers.unshift({n,label,at:new Date().toISOString()}); await runPush();
 }
 function runPush(label){clearTimeout(syncT); chain=chain.then(()=>push(label)).catch(e=>{setSync('not saved');toast(ghMsg(e));}); return chain;}
-function queueSync(){if(!gh) return; ls(DKEY,'1'); setSync('saving…'); clearTimeout(syncT); syncT=setTimeout(()=>runPush(),2500);}
+function queueSync(){if(!gh||preview) return; ls(DKEY,'1'); setSync('saving…'); clearTimeout(syncT); syncT=setTimeout(()=>runPush(),2500);}
 function adopt(p){state={trades:p.trades||[],journal:p.journal||{},media:p.media||{}}; persist(true);}
 async function ghInit(){
   if(!gh) return; setSync('loading…');
   try{
-    await getSha(); const p=ghSha?await pull():null; if(p) rev=p.rev||0;
+    await getSha(); const p=ghSha?await pull():null; if(p&&Array.isArray(p.versions)) vers=p.versions;
     const mine=state.trades.some(t=>!t.sample);
     if(ls(DKEY)&&mine) await runPush('Changes made offline');
-    else if(p&&Array.isArray(p.trades)){adopt(p); setSync(`v${rev} loaded`);}
+    else if(p&&Array.isArray(p.trades)){adopt(p); setSync('loaded '+stamp());}
     else if(mine) await runPush('First upload');
     else setSync('connected');
     renderAll();
   }catch(e){setSync('offline');toast(ghMsg(e));}
 }
-async function ghHistory(){
-  const box=$('#ghHist'); box.textContent='Loading…';
-  try{const r=await api('commits?path='+FILE+'&per_page=40'); if(!r.ok) throw new Error(r.status); const list=await r.json();
-    box.innerHTML=list.length?list.map(c=>`<div class="dt"><span><b>${esc(c.commit.message.split('\n')[0])}</b><br><span class="hint">${esc(new Date(c.commit.author.date).toLocaleString('en-GB'))}</span></span><button class="btn" data-ref="${esc(c.sha)}" data-msg="${esc(c.commit.message.split('\n')[0])}">Restore</button></div>`).join(''):'No versions yet. Add a trade or save a version.';
-  }catch(e){box.textContent=ghMsg(e);}
+function ghHistory(){
+  const row=(t,sub,ref)=>`<div class="dt"><span><b>${t}</b><br><span class="hint">${sub}</span></span><button class="btn" data-ref="${ref}">Restore</button></div>`;
+  $('#ghHist').innerHTML=vers.map(v=>row(`v${v.n} · ${esc(v.label)}`,esc(new Date(v.at).toLocaleString('en-GB')),v.n)).join('')+row('Original example','Sample trades, for reference only. Never saved.','example');
 }
 function showSync(){
   $('#ghOff').hidden=!!gh; $('#ghOn').hidden=!gh; $('#ghErr').textContent='';
-  if(gh){$('#ghInfo').innerHTML=`Connected to <b>${esc(gh.owner)}/${esc(gh.repo)}</b>. Changes save automatically; name a version to mark a point you may want to return to.`; ghHistory();}
+  if(gh){$('#ghInfo').innerHTML=`Connected to <b>${esc(gh.owner)}/${esc(gh.repo)}</b>. Your entries save automatically in the background. Only versions you name appear below.`; ghHistory();}
   $('#syncModal').hidden=false;
 }
 function seedSamples(){
@@ -533,7 +539,7 @@ $('#delTrade').onclick=e=>{
   const b=e.currentTarget; if(!b.dataset.armed){b.dataset.armed='1';b.textContent='Click again to delete';return;}
   state.trades=state.trades.filter(t=>t.id!==editId); persist(); $('#tradeModal').hidden=true; renderAll(); if(selDay) fillDay(); toast('Trade deleted');
 };
-$('#clearSamples').onclick=()=>{state.trades=state.trades.filter(t=>!t.sample);persist();renderAll();if(selDay)fillDay();};
+$('#clearSamples').onclick=()=>{if(preview&&gh){preview=false;ghInit();return;}state.trades=state.trades.filter(t=>!t.sample);persist();renderAll();if(selDay)fillDay();};
 
 // ---- month + scope
 $('#prev').onclick=()=>{month.setMonth(month.getMonth()-1);dayFilter=null;renderAll();};
@@ -656,10 +662,13 @@ $('#ghConnect').onclick=async()=>{
   try{const r=await api(''); if(!r.ok) throw new Error(r.status); ls(GKEY,JSON.stringify(gh)); $('#ghToken').value=''; await ghInit(); showSync(); toast('Connected to GitHub');}
   catch(e){gh=null; $('#ghErr').textContent=ghMsg(e);}
 };
-$('#ghSave').onclick=async()=>{const l=$('#ghLabel').value.trim(); if(!l){$('#ghLabel').focus();return;} await runPush(l); $('#ghLabel').value=''; ghHistory();};
+$('#ghSave').onclick=async()=>{const l=$('#ghLabel').value.trim(); if(!l){$('#ghLabel').focus();return;}
+  try{await saveVersion(l); $('#ghLabel').value=''; ghHistory(); toast('Version saved');}catch(e){toast(ghMsg(e));}};
 $('#ghHist').onclick=async e=>{const b=e.target.closest('[data-ref]'); if(!b) return;
   if(!b.dataset.armed){b.dataset.armed='1';b.textContent='Click again';return;}
-  try{const p=await pull(b.dataset.ref); if(!p) throw new Error('404'); adopt(p); await runPush('Restored: '+b.dataset.msg); renderAll(); ghHistory(); toast('Version restored');}catch(err){toast(ghMsg(err));}
+  const ref=b.dataset.ref;
+  if(ref==='example'){preview=true; state={trades:[],journal:{},media:{}}; seedSamples(); renderAll(); $('#syncModal').hidden=true; toast('Showing the original example. Clear samples to return to your data.'); return;}
+  try{const p=await pull(`versions/v${ref}.json`); if(!p) throw new Error('404'); preview=false; adopt(p); queueSync(); renderAll(); ghHistory(); toast(`v${ref} restored`);}catch(err){toast(ghMsg(err));}
 };
 $('#ghOffBtn').onclick=()=>{gh=null;ghSha=null;ls(GKEY,null);renderHead();showSync();};
 window.addEventListener('beforeunload',e=>{if(gh&&ls(DKEY)){e.preventDefault();e.returnValue='';}});
