@@ -137,10 +137,30 @@ button.cell:hover{transform:translateY(-2px);border-color:var(--dimmer)}
 .search{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;width:200px;max-width:100%}
 .chip{font-family:var(--mono);font-size:11.5px;color:var(--amber);border:1px solid var(--amber);padding:3px 10px;border-radius:20px}
 .tbl{overflow-x:auto}
-table{width:100%;border-collapse:collapse;min-width:680px}
+table{width:100%;border-collapse:collapse}
 th{text-align:left;font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;padding:0 10px 8px;border-bottom:1px solid var(--border)}
 td{padding:9px 10px;font-size:13px;border-bottom:1px solid var(--border)}
 tbody tr{cursor:pointer}
+th,td{white-space:nowrap}
+.cut{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.nt .cut{max-width:300px;color:var(--dim);transition:transform .16s ease,color .16s ease}
+td.nt:hover .cut{transform:translateY(-2px);color:var(--text)}
+#notePop{position:fixed;z-index:70;max-width:460px;max-height:60vh;overflow-y:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.55;white-space:pre-wrap;box-shadow:0 16px 36px rgba(0,0,0,.35);opacity:0;transform:translateY(6px) scale(.98);transition:opacity .16s ease,transform .22s cubic-bezier(.2,.8,.25,1);pointer-events:none}
+#notePop.show{opacity:1;transform:translateY(-4px) scale(1)}
+#notePop.pin{pointer-events:auto;border-color:var(--amber)}
+.mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-bottom:8px}
+.mitem{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:16/10;background:var(--surface-3);max-width:100%}
+.mitem img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+.mitem .k{position:absolute;left:5px;bottom:5px;font-size:10px;background:rgba(8,10,14,.72);color:#fff;padding:2px 6px;border-radius:4px}
+.mitem .x{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(8,10,14,.72);color:#fff;font-size:12px;line-height:22px;text-align:center}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;width:100%}
+.thumbs img{width:64px;height:40px;object-fit:cover;border-radius:5px;border:1px solid var(--border);cursor:zoom-in}
+.dt{flex-wrap:wrap;cursor:pointer}
+#mediaModal{cursor:zoom-out;animation:fadeIn .2s ease-out}
+#mediaBody{max-width:min(1400px,100%);max-height:90vh;display:flex;flex-direction:column;align-items:center;gap:8px}
+#mediaBody img,#mediaBody video{max-width:100%;max-height:84vh;border-radius:10px;box-shadow:0 20px 50px rgba(0,0,0,.45);animation:popIn .28s cubic-bezier(.2,.8,.25,1)}
+#mediaBody video{cursor:default}
+#mediaBody .hint{color:#fff}
 tbody tr:hover{background:var(--surface)}
 .tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;text-transform:uppercase;letter-spacing:.03em;border:1px solid currentColor;display:inline-block;min-width:58px;text-align:center}
 .empty{text-align:center;padding:36px 16px;color:var(--dim)}
@@ -284,9 +304,19 @@ textarea.code{min-height:110px;font-family:var(--mono);font-size:12px;resize:ver
       <div class="f"><label for="fSide">Side</label><select id="fSide"><option value="long">Long</option><option value="short">Short</option></select></div>
       <div class="f"><label for="fPnl">Net P&amp;L ($)</label><input type="number" step="0.01" id="fPnl" placeholder="240 or -85"></div>
     </div>
+    <div class="fr">
+      <div class="f"><label for="fRisk">Risk amount ($)</label><input type="number" step="0.01" min="0" id="fRisk" placeholder="e.g. 250"></div>
+      <div class="f"><label for="fRR">RR (R multiple)</label><input type="number" step="0.01" id="fRR" placeholder="auto: P&amp;L ÷ risk"></div>
+    </div>
     <div class="f"><label for="fAcct">Account</label><select id="fAcct"></select></div>
     <div class="f"><label for="fSetup">Setup (optional)</label><input type="text" id="fSetup" placeholder="ORB, VWAP reclaim" list="setupList"><datalist id="setupList"></datalist></div>
     <div class="f"><label for="fNotes">Notes (optional)</label><textarea id="fNotes" rows="2" placeholder="Execution, mistake, what you saw"></textarea></div>
+    <div class="f"><label>Screenshots and recordings</label>
+      <div class="mgrid" id="fMedia"></div>
+      <button class="drop" id="fDrop" type="button">Drop images or screen recordings, or click to choose</button>
+      <input type="file" id="fMediaIn" accept="image/*,video/*" multiple hidden>
+      <div class="hint" id="fMediaHint"></div>
+    </div>
     <div class="err" id="tradeErr"></div>
     <div class="acts">
       <button class="btn ghost danger" id="delTrade" hidden>Delete</button>
@@ -374,14 +404,15 @@ textarea.code{min-height:110px;font-family:var(--mono);font-size:12px;resize:ver
   </div>
   <div class="big" id="pPnl"></div>
   <div>
+    <select class="search" id="pAcct" aria-label="Filter this day by account" style="width:100%;margin-bottom:10px"></select>
     <div id="pTrades"></div>
     <button class="btn" id="pAdd">+ Add trade for this day</button>
   </div>
-  <div>
-    <div class="lab" style="margin-bottom:8px">Chart screenshot or recording</div>
-    <div id="pThumb"></div>
-    <button class="drop" id="drop">Drop an image or screen recording, or click to choose.<br><span class="hint">Only a small preview frame is kept.</span></button>
-    <input type="file" id="mediaIn" accept="image/*,video/*" hidden>
+  <div id="pLegacy" hidden>
+    <div class="lab" style="margin-bottom:8px">Earlier day screenshot</div>
+    <div class="hint" style="margin-bottom:8px">Saved before per-trade uploads. New screenshots go on each trade.</div>
+    <img class="thumb" id="pLegacyImg" alt="Earlier screenshot for this day">
+    <button class="btn ghost danger" id="pLegacyDel" style="margin-top:8px">Remove</button>
   </div>
   <div>
     <label class="lab" for="journal" style="display:block;margin-bottom:8px">Journal</label>
@@ -390,6 +421,8 @@ textarea.code{min-height:110px;font-family:var(--mono);font-size:12px;resize:ver
   </div>
 </aside>
 
+<div class="overlay" id="mediaModal" hidden><div id="mediaBody"></div></div>
+<div id="notePop" role="tooltip"></div>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -407,6 +440,7 @@ const signed=n=>(n>0?'+':'')+money(n);
 const compact=n=>{const a=Math.abs(n);const s=a>=1000?(a/1000).toFixed(1)+'k':Math.round(a);return (n>0?'+':n<0?'-':'')+'$'+s;};
 const cls=n=>Math.round(n*100)===0?'evn':n>0?'pos':'neg';
 const sum=a=>a.reduce((s,x)=>s+x.pnl,0);
+const fmtR=r=>r==null||isNaN(r)?'':(Math.round(r*100)/100)+'R';
 const TYPES=['Futures','CFD','Perpetuals','Crypto','Personal'];
 let acctFilter='', rFrom='', rTo='', flip={}, eqHide=new Set(), eqKeys=[], bkRows={}, popKey=null;
 let lf={from:'',to:'',side:'',notes:'',sym:new Set(),acct:new Set(),setup:new Set()};
@@ -598,7 +632,7 @@ function renderCal(){
       c.style.background=`color-mix(in srgb, var(${tok}) ${pct}%, var(--surface))`;
       c.style.borderColor=`color-mix(in srgb, var(${tok}) 60%, var(--surface))`;
     }
-    const noted=(state.journal[k]||'').trim()||state.media[k];
+    const noted=(state.journal[k]||'').trim()||state.media[k]||trs.some(t=>t.shots&&t.shots.length);
     c.innerHTML=`<span class="d">${d}</span>${noted?'<span class="dot"></span>':''}${trs.length?`<span><span class="p">${compact(net)}</span><br><span class="c">${trs.length} trade${trs.length>1?'s':''}</span></span>`:''}`;
     c.setAttribute('aria-label',`${k}${trs.length?', '+signed(net)+', '+trs.length+' trades':''}`);
     c.onclick=()=>openDay(k);
@@ -638,10 +672,13 @@ function renderLog(){
   $('#lfBtn').textContent=nf?`Filters (${nf})`:'Filters'; $('#lfInfo').textContent=nf?`${list.length} of ${state.trades.length} trades match`:'';
   const chip=$('#dayChip'); chip.hidden=!dayFilter||!!nf; chip.textContent=dayFilter?dayFilter+' ✕':'';
   if(!list.length){$('#log').innerHTML='<div class="empty">No trades match. Add one or import a CSV.</div>';return;}
-  $('#log').innerHTML=`<table><thead><tr><th>Date</th><th>Symbol</th><th>Account</th><th>Side</th><th>Net P&amp;L</th><th>Setup</th><th>Notes</th></tr></thead><tbody>${
-    list.map(t=>`<tr data-id="${esc(t.id)}" tabindex="0"><td class="mono">${esc(t.date)}</td><td><b>${esc(t.symbol)}</b></td><td>${esc(acctName(t.account))}</td><td><span class="tag ${t.side==='long'?'pos':'neg'}">${esc(t.side)}</span></td><td class="mono ${cls(t.pnl)}"><b>${signed(t.pnl)}</b></td><td>${esc(t.setup||'')}</td><td style="color:var(--dim)">${esc(t.notes||'')}</td></tr>`).join('')}</tbody></table>`;
+  $('#log').innerHTML=`<table><thead><tr><th>Date</th><th>Symbol</th><th>Account</th><th>Side</th><th>Net P&amp;L</th><th>Risk</th><th>RR</th><th>Setup</th><th>Notes</th><th>Media</th></tr></thead><tbody>${
+    list.map(t=>`<tr data-id="${esc(t.id)}" tabindex="0"><td class="mono">${esc(t.date)}</td><td><b>${esc(t.symbol)}</b></td><td><div class="cut" style="max-width:210px" title="${esc(acctName(t.account))}">${esc(acctName(t.account))}</div></td><td><span class="tag ${t.side==='long'?'pos':'neg'}">${esc(t.side)}</span></td><td class="mono ${cls(t.pnl)}"><b>${signed(t.pnl)}</b></td><td class="mono">${t.risk!=null?money(t.risk):''}</td><td class="mono ${t.rr!=null?cls(t.rr):''}">${fmtR(t.rr)}</td><td><div class="cut" style="max-width:150px">${esc(t.setup||'')}</div></td><td class="nt" data-id="${esc(t.id)}"><div class="cut">${esc(t.notes||'')}</div></td><td>${(t.shots||[]).length?`<button class="btn ghost md" data-id="${esc(t.id)}" style="padding:3px 8px">▣ ${t.shots.length}</button>`:''}</td></tr>`).join('')}</tbody></table>`;
 }
-$('#log').addEventListener('click',e=>{const r=e.target.closest('tr[data-id]'); if(r) openTrade(r.dataset.id);});
+$('#log').addEventListener('click',e=>{
+  const n=e.target.closest('.nt'); if(n){e.stopPropagation(); notePin(n); return;}
+  const m=e.target.closest('.md'); if(m){const t=state.trades.find(x=>x.id===m.dataset.id); if(t&&t.shots&&t.shots[0]) openMedia(t.shots[0]); return;}
+  const r=e.target.closest('tr[data-id]'); if(r) openTrade(r.dataset.id);});
 $('#log').addEventListener('keydown',e=>{if(e.key==='Enter'){const r=e.target.closest('tr[data-id]'); if(r) openTrade(r.dataset.id);}});
 $('#search').addEventListener('input',renderLog);
 $('#dayChip').onclick=()=>{dayFilter=null;renderLog();};
@@ -652,6 +689,8 @@ function openTrade(id,date){
   $('#tradeTitle').textContent=t?'Edit trade':'Add trade';
   $('#fDate').value=t?t.date:(date||today()); $('#fSymbol').value=t?t.symbol:''; $('#fSide').value=t?t.side:'long';
   $('#fPnl').value=t?t.pnl:''; $('#fAcct').value=t?(t.account||''):(acctFilter||ls('trade-journal-lastacct')||''); $('#fSetup').value=t?(t.setup||''):''; $('#fNotes').value=t?(t.notes||''):'';
+  $('#fRisk').value=t&&t.risk!=null?t.risk:''; $('#fRR').value=t&&t.rr!=null&&!t.rrAuto?t.rr:'';
+  fShots=t&&t.shots?t.shots.map(x=>({...x})):[]; renderFShots();
   $('#tradeErr').textContent=''; const del=$('#delTrade'); del.hidden=!t; del.textContent='Delete'; del.dataset.armed='';
   $('#tradeModal').hidden=false; $('#fSymbol').focus();
 }
@@ -659,9 +698,13 @@ $('#addBtn').onclick=()=>openTrade(null);
 $('#saveTrade').onclick=()=>{
   const date=$('#fDate').value, symbol=$('#fSymbol').value.trim().toUpperCase(), pnl=parseFloat($('#fPnl').value);
   if(!date||!symbol||isNaN(pnl)){$('#tradeErr').textContent='Add a date, a symbol and a net P&L amount.';return;}
-  const rec={date,symbol,account:$('#fAcct').value,side:$('#fSide').value,pnl,setup:$('#fSetup').value.trim(),notes:$('#fNotes').value.trim()};
+  const risk=parseFloat($('#fRisk').value), rrIn=parseFloat($('#fRR').value), rrAuto=isNaN(rrIn)&&risk>0;
+  const pending=fShots.filter(x=>x.file).map(x=>({id:x.id,file:x.file}));
+  const rec={date,symbol,account:$('#fAcct').value,side:$('#fSide').value,pnl,risk:isNaN(risk)?null:risk,rr:!isNaN(rrIn)?rrIn:rrAuto?Math.round(pnl/risk*100)/100:null,rrAuto,
+    setup:$('#fSetup').value.trim(),notes:$('#fNotes').value.trim(),shots:fShots.map(({file,...x})=>x)};
   ls('trade-journal-lastacct',rec.account||null);
-  if(editId){Object.assign(state.trades.find(x=>x.id===editId),rec,{sample:false});} else state.trades.push({id:uid(),...rec});
+  const tid=editId||uid(); if(editId){Object.assign(state.trades.find(x=>x.id===editId),rec,{sample:false});} else state.trades.push({id:tid,...rec});
+  pending.forEach(x=>queueUpload(tid,x.id,x.file));
   persist(); $('#tradeModal').hidden=true; renderAll(); if(selDay) fillDay(); toast('Trade saved');
 };
 $('#delTrade').onclick=e=>{
@@ -678,20 +721,26 @@ $('#scope').onclick=e=>{const b=e.target.closest('button'); if(!b) return; scope
 
 // ---- day panel
 function openDay(k){selDay=k;dayFilter=k;fillDay();$('#panel').hidden=false;$('#scrim').hidden=false;renderLog();}
+let pAcct='';
 function fillDay(){
-  const k=selDay, trs=T().filter(t=>t.date===k), net=sum(trs);
+  const k=selDay, dayAll=state.trades.filter(t=>t.date===k);
+  const ids=[...new Set(dayAll.map(t=>t.account||''))]; if(pAcct&&!ids.includes(pAcct)) pAcct='';
+  $('#pAcct').innerHTML=`<option value="">All accounts (${dayAll.length} trade${dayAll.length===1?'':'s'})</option>`+ids.map(id=>`<option value="${esc(id)}"${id===pAcct?' selected':''}>${esc(acctName(id)||'Unassigned')}</option>`).join('');
+  $('#pAcct').hidden=ids.length<2&&!pAcct;
+  const trs=dayAll.filter(t=>!pAcct||(t.account||'')===pAcct), net=sum(trs);
   $('#pDate').textContent=new Date(k+'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   const p=$('#pPnl'); p.textContent=trs.length?signed(net):'No trades'; p.className='big '+(trs.length?cls(net):'');
-  $('#pTrades').innerHTML=trs.map(t=>`<button class="dt" data-id="${esc(t.id)}"><span><b class="mono">${esc(t.symbol)}</b> · ${esc(t.side)}${t.setup?' · '+esc(t.setup):''}</span><b class="mono ${cls(t.pnl)}">${signed(t.pnl)}</b></button>`).join('');
+  $('#pTrades').innerHTML=trs.map(t=>`<div class="dt" data-id="${esc(t.id)}" tabindex="0" role="button"><span style="min-width:0"><b class="mono">${esc(t.symbol)}</b> · ${esc(t.side)}${t.rr!=null?' · '+fmtR(t.rr):''}${t.setup?' · '+esc(t.setup):''}<br><span class="hint">${esc(acctName(t.account)||'Unassigned')}</span></span><b class="mono ${cls(t.pnl)}">${signed(t.pnl)}</b>${(t.shots||[]).length?`<span class="thumbs">${t.shots.map(x=>`<img src="${esc(x.thumb)}" data-tid="${esc(t.id)}" data-sid="${esc(x.id)}" alt="${x.kind==='video'?'Recording':'Screenshot'} for ${esc(t.symbol)}">`).join('')}</span>`:''}</div>`).join('');
   $('#journal').value=state.journal[k]||''; $('#saved').innerHTML='&nbsp;';
-  const md=state.media[k];
-  $('#pThumb').innerHTML=md?`<img class="thumb" src="${esc(md)}" alt="Saved preview for this day"><div class="row" style="margin:8px 0"><button class="btn" id="mRep">Replace</button><button class="btn ghost danger" id="mDel">Remove</button></div>`:'';
-  $('#drop').hidden=!!md;
-  if(md){$('#mRep').onclick=()=>$('#mediaIn').click();$('#mDel').onclick=()=>{delete state.media[k];persist();fillDay();renderCal();};}
+  const md=state.media[k]; $('#pLegacy').hidden=!md; if(md) $('#pLegacyImg').src=md;
 }
+$('#pAcct').onchange=e=>{pAcct=e.target.value;fillDay();};
+$('#pLegacyDel').onclick=e=>{const b=e.currentTarget; if(!b.dataset.armed){b.dataset.armed='1';b.textContent='Click again';return;} b.dataset.armed='';b.textContent='Remove'; delete state.media[selDay]; persist(); fillDay(); renderCal();};
 function closeDay(){$('#panel').hidden=true;$('#scrim').hidden=true;selDay=null;}
 $('#pClose').onclick=closeDay; $('#scrim').onclick=closeDay;
-$('#pTrades').onclick=e=>{const b=e.target.closest('[data-id]'); if(b) openTrade(b.dataset.id);};
+$('#pTrades').onclick=e=>{const im=e.target.closest('img[data-sid]'); if(im){const t=state.trades.find(x=>x.id===im.dataset.tid); const sh=t&&t.shots.find(x=>x.id===im.dataset.sid); if(sh) openMedia(sh); return;}
+  const b=e.target.closest('[data-id]'); if(b) openTrade(b.dataset.id);};
+$('#pTrades').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('[data-id]')) openTrade(e.target.dataset.id);});
 $('#pAdd').onclick=()=>openTrade(null,selDay);
 let jt; $('#journal').addEventListener('input',e=>{
   if(!selDay) return; const k=selDay; state.journal[k]=e.target.value; clearTimeout(jt);
@@ -699,7 +748,7 @@ let jt; $('#journal').addEventListener('input',e=>{
 });
 
 // ---- media preview (image or one video frame, downscaled)
-function toThumb(src,w,h){const s=Math.min(1,560/w), c=document.createElement('canvas'); c.width=Math.round(w*s); c.height=Math.round(h*s); c.getContext('2d').drawImage(src,0,0,c.width,c.height); return c.toDataURL('image/jpeg',.72);}
+function toThumb(src,w,h){const s=Math.min(1,480/w), c=document.createElement('canvas'); c.width=Math.round(w*s); c.height=Math.round(h*s); c.getContext('2d').drawImage(src,0,0,c.width,c.height); return c.toDataURL('image/jpeg',.72);}
 function readMedia(file){return new Promise((res,rej)=>{
   const url=URL.createObjectURL(file);
   if(file.type.startsWith('image/')){const im=new Image(); im.onload=()=>{res(toThumb(im,im.naturalWidth,im.naturalHeight));URL.revokeObjectURL(url);}; im.onerror=()=>rej(); im.src=url;}
@@ -709,17 +758,72 @@ function readMedia(file){return new Promise((res,rej)=>{
     v.onerror=()=>rej(); v.src=url;}
   else rej();
 });}
-async function handleMedia(file){
-  if(!file||!selDay) return; const k=selDay;
-  try{state.media[k]=await readMedia(file); if(!persist()) delete state.media[k]; fillDay(); renderCal();}
-  catch(e){toast('Could not read that file. Try a PNG, JPG or MP4.');}
+let fShots=[], uploading=new Set(), mediaURL=null;
+const MAXUP=25*1024*1024;
+function renderFShots(){
+  $('#fMedia').innerHTML=fShots.map(x=>`<div class="mitem"><img src="${esc(x.thumb)}" data-sid="${esc(x.id)}" alt="${x.kind==='video'?'Recording':'Screenshot'} preview"><span class="k">${x.kind==='video'?'Video':'Image'}${uploading.has(x.id)?' · uploading':x.file?' · not saved yet':!x.path?' · preview only':''}</span><button type="button" class="x" data-del="${esc(x.id)}" aria-label="Remove">✕</button></div>`).join('');
+  $('#fMediaHint').textContent=gh?'Full files are kept in your private GitHub repo (up to 25 MB each).':'Only a preview is kept. Connect GitHub under Versions to keep full files.';
 }
-const drop=$('#drop');
-drop.onclick=()=>$('#mediaIn').click();
-drop.ondragover=e=>{e.preventDefault();drop.classList.add('drag');};
-drop.ondragleave=()=>drop.classList.remove('drag');
-drop.ondrop=e=>{e.preventDefault();drop.classList.remove('drag');handleMedia(e.dataTransfer.files[0]);};
-$('#mediaIn').onchange=e=>{handleMedia(e.target.files[0]);e.target.value='';};
+async function addFiles(files){
+  for(const f of files){ if(!/^(image|video)\//.test(f.type)){toast('Use an image or a video file.');continue;}
+    try{fShots.push({id:uid(),kind:f.type.startsWith('video/')?'video':'image',mime:f.type,name:f.name,thumb:await readMedia(f),path:null,file:f});}catch(e){toast('Could not read '+f.name);} }
+  renderFShots();
+}
+const fDrop=$('#fDrop');
+fDrop.onclick=()=>$('#fMediaIn').click();
+fDrop.ondragover=e=>{e.preventDefault();fDrop.classList.add('drag');};
+fDrop.ondragleave=()=>fDrop.classList.remove('drag');
+fDrop.ondrop=e=>{e.preventDefault();fDrop.classList.remove('drag');addFiles([...e.dataTransfer.files]);};
+$('#fMediaIn').onchange=e=>{addFiles([...e.target.files]);e.target.value='';};
+$('#fMedia').onclick=e=>{const d=e.target.closest('[data-del]'); if(d){fShots=fShots.filter(x=>x.id!==d.dataset.del);renderFShots();return;}
+  const im=e.target.closest('img[data-sid]'); if(im) openMedia(fShots.find(x=>x.id===im.dataset.sid));};
+const b64buf=buf=>{const b=new Uint8Array(buf);let o='';for(let i=0;i<b.length;i+=8192)o+=String.fromCharCode.apply(null,b.subarray(i,i+8192));return btoa(o);};
+function queueUpload(tid,sid,file){
+  if(!gh||preview) return;
+  if(file.size>MAXUP){toast(`${file.name} is over 25 MB, so only its preview is kept.`);return;}
+  uploading.add(sid);
+  chain=chain.then(async()=>{
+    const ext=(file.name.split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'')||'bin', path=`media/${sid}.${ext}`;
+    const body=JSON.stringify({message:'media '+path,content:b64buf(await file.arrayBuffer())});
+    let r=await api('contents/'+path,{method:'PUT',body}); if(r.status===409) r=await api('contents/'+path,{method:'PUT',body});
+    if(!r.ok) throw new Error(r.status);
+    const t=state.trades.find(x=>x.id===tid), sh=t&&(t.shots||[]).find(x=>x.id===sid);
+    if(sh){sh.path=path; await push();}
+  }).catch(e=>toast(`${file.name} did not upload. Its preview is kept.`)).finally(()=>{uploading.delete(sid); if(!$('#tradeModal').hidden) renderFShots();});
+}
+async function openMedia(sh){
+  if(!sh) return; const box=$('#mediaBody'), m=$('#mediaModal');
+  box.innerHTML='<span class="hint">Loading…</span>'; m.hidden=false;
+  let src=sh.thumb, full=false;
+  try{
+    if(sh.file){src=mediaURL=URL.createObjectURL(sh.file);full=true;}
+    else if(sh.path&&gh){const r=await api('contents/'+sh.path,{accept:'application/vnd.github.raw+json'}); if(!r.ok) throw new Error(r.status);
+      src=mediaURL=URL.createObjectURL(new Blob([await r.arrayBuffer()],{type:sh.mime||''})); full=true;}
+  }catch(e){}
+  if(m.hidden) return;
+  box.innerHTML=(full&&sh.kind==='video')?`<video src="${src}" controls autoplay muted playsinline></video>`:`<img src="${src}" alt="Trade screenshot">`;
+  box.insertAdjacentHTML('beforeend',`<span class="hint">${full?'':(sh.kind==='video'?'Preview frame only. ':'Preview only. ')}Click anywhere to close</span>`);
+}
+function closeMedia(){const m=$('#mediaModal'); m.hidden=true; $('#mediaBody').innerHTML=''; if(mediaURL){URL.revokeObjectURL(mediaURL);mediaURL=null;}}
+$('#mediaModal').addEventListener('click',e=>{if(!e.target.closest('video')) closeMedia();});
+
+// ---- notes popover
+let noteCell=null, notePinned=false;
+function noteShow(cell){
+  const t=state.trades.find(x=>x.id===cell.dataset.id); if(!t||!t.notes) return;
+  const pop=$('#notePop'), r=cell.getBoundingClientRect(); noteCell=cell;
+  pop.textContent=t.notes; pop.style.width=Math.min(460,Math.max(300,r.width+40))+'px';
+  const w=pop.offsetWidth, h=pop.offsetHeight;
+  pop.style.left=Math.max(12,Math.min(r.left-8,innerWidth-w-12))+'px';
+  pop.style.top=Math.max(12,Math.min(r.top-10,innerHeight-h-12))+'px';
+  pop.classList.add('show');
+}
+function noteHide(){const pop=$('#notePop'); pop.classList.remove('show','pin'); noteCell=null; notePinned=false;}
+function notePin(cell){ if(notePinned&&noteCell===cell){noteHide();return;} noteShow(cell); if(noteCell){notePinned=true;$('#notePop').classList.add('pin');} }
+$('#log').addEventListener('mouseover',e=>{const c=e.target.closest('.nt'); if(c&&c!==noteCell&&!notePinned) noteShow(c);});
+$('#log').addEventListener('mouseout',e=>{const c=e.target.closest('.nt'); if(c&&!c.contains(e.relatedTarget)&&!notePinned) noteHide();});
+document.addEventListener('click',e=>{if(notePinned&&!e.target.closest('.nt')&&!e.target.closest('#notePop')) noteHide();});
+window.addEventListener('scroll',()=>{if(noteCell) noteHide();},true);
 
 // ---- import
 function csvRows(text){
@@ -743,14 +847,14 @@ function normDate(raw){
 function parseCSV(text){
   const rows=csvRows(text); if(rows.length<2) return {error:'Add a header row plus at least one trade row.'};
   const h=rows[0].map(x=>x.trim().toLowerCase()), find=(...n)=>h.findIndex(x=>n.some(k=>x.includes(k)));
-  const ix={date:find('date','time'),symbol:find('symbol','ticker','instrument','contract'),side:find('side','direction','action'),pnl:find('pnl','p&l','p/l','profit','net'),account:find('account'),setup:find('setup','strategy','tag'),notes:find('note','comment')};
+  const ix={date:find('date','time'),symbol:find('symbol','ticker','instrument','contract'),side:find('side','direction','action'),pnl:find('pnl','p&l','p/l','profit','net'),account:find('account'),risk:find('risk'),rr:h.findIndex(x=>x==='rr'||x==='r'||x.includes('r:r')||x.includes('r multiple')),setup:find('setup','strategy','tag'),notes:find('note','comment')};
   if(ix.date<0||ix.symbol<0||ix.pnl<0) return {error:'The header row needs date, symbol and pnl columns.'};
   const out=[]; let skipped=0;
   for(const c of rows.slice(1)){
     const date=normDate(c[ix.date]), symbol=(c[ix.symbol]||'').trim().toUpperCase();
     let p=(c[ix.pnl]||'').trim(); const negp=/^\(.*\)$/.test(p); let pnl=parseFloat(p.replace(/[$,()\s]/g,'')); if(negp) pnl=-pnl;
     let side=ix.side>=0?(c[ix.side]||'').trim().toLowerCase():''; side=/^(short|sell|s)$/.test(side)?'short':/^(long|buy|b|l)$/.test(side)?'long':(pnl>=0?'long':'short');
-    if(date&&symbol&&!isNaN(pnl)) out.push({id:uid(),date,symbol,side,pnl,account:ix.account>=0?acctId((c[ix.account]||'').trim()):'',setup:ix.setup>=0?(c[ix.setup]||'').trim():'',notes:ix.notes>=0?(c[ix.notes]||'').trim():''}); else skipped++;
+    if(date&&symbol&&!isNaN(pnl)) out.push({id:uid(),date,symbol,side,pnl,account:ix.account>=0?acctId((c[ix.account]||'').trim()):'',risk:ix.risk>=0&&c[ix.risk]&&!isNaN(parseFloat(c[ix.risk]))?parseFloat(c[ix.risk].replace(/[$,]/g,'')):null,rr:ix.rr>=0&&c[ix.rr]&&!isNaN(parseFloat(c[ix.rr]))?parseFloat(c[ix.rr]):null,setup:ix.setup>=0?(c[ix.setup]||'').trim():'',notes:ix.notes>=0?(c[ix.notes]||'').trim():''}); else skipped++;
   }
   return out.length?{rows:out,skipped}:{error:'No valid rows found. Check the date, symbol and pnl values.'};
 }
@@ -775,7 +879,7 @@ function copy(text,msg){(navigator.clipboard?navigator.clipboard.writeText(text)
 $('#exportBtn').onclick=()=>{$('#expText').value=JSON.stringify(snap());$('#exportModal').hidden=false;};
 $('#expCopy').onclick=()=>copy($('#expText').value,'Backup copied');
 $('#expCsv').onclick=()=>{const q=s=>'"'+String(s??'').replace(/"/g,'""')+'"';
-  copy(['date,symbol,side,pnl,account,setup,notes',...state.trades.filter(t=>!t.sample).map(t=>[t.date,t.symbol,t.side,t.pnl,q(acctPlain(t.account)),q(t.setup),q(t.notes)].join(','))].join('\n'),'CSV copied');};
+  copy(['date,symbol,side,pnl,risk,rr,account,setup,notes',...state.trades.filter(t=>!t.sample).map(t=>[t.date,t.symbol,t.side,t.pnl,t.risk??'',t.rr??'',q(acctPlain(t.account)),q(t.setup),q(t.notes)].join(','))].join('\n'),'CSV copied');};
 $('#expFile').onclick=()=>{try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('#expText').value],{type:'application/json'}));a.download=`trade-journal-${today()}.json`;document.body.appendChild(a);a.click();a.remove();toast('If no file appeared, use Copy backup');}catch(e){toast('Use Copy backup instead');}};
 
 // ---- closing
